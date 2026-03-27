@@ -28,15 +28,25 @@ function buildReceipt(data, status) {
   };
 }
 
+async function safeJson(response) {
+  const text = await response.text();
+  if (!text || text.trim() === "") {
+    return { _raw: "", _parseError: "Lipila returned an empty response body." };
+  }
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    return { _raw: text, _parseError: `Lipila response could not be parsed as JSON. Raw response: ${text}` };
+  }
+}
+
 app.post("/initiate", async (req, res) => {
   const { phoneNumber, amount } = req.body;
 
   if (!phoneNumber || !amount) {
     return res
       .status(400)
-      .send(
-        "Error: Both phoneNumber and amount are required to initiate a payment."
-      );
+      .send("Error: Both phoneNumber and amount are required to initiate a payment.");
   }
 
   const numericAmount = Number(amount);
@@ -57,8 +67,6 @@ app.post("/initiate", async (req, res) => {
   };
 
   let lipilResponse;
-  let lipilData;
-
   try {
     lipilResponse = await fetch(`${LIPILA_BASE_URL}/collections/mobile-money`, {
       method: "POST",
@@ -69,14 +77,18 @@ app.post("/initiate", async (req, res) => {
       },
       body: JSON.stringify(payload),
     });
-
-    lipilData = await lipilResponse.json();
   } catch (networkError) {
     return res
       .status(502)
-      .send(
-        `Error: Failed to reach Lipila API. Network error: ${networkError.message}`
-      );
+      .send(`Error: Could not connect to Lipila API. Check your internet or try again. Detail: ${networkError.message}`);
+  }
+
+  const lipilData = await safeJson(lipilResponse);
+
+  if (lipilData._parseError) {
+    return res
+      .status(502)
+      .send(`Error: Lipila API responded with HTTP ${lipilResponse.status} but returned an unreadable body. ${lipilData._parseError}`);
   }
 
   if (!lipilResponse.ok) {
@@ -85,20 +97,16 @@ app.post("/initiate", async (req, res) => {
       lipilData?.error ||
       JSON.stringify(lipilData) ||
       "Unknown error from Lipila API";
-
     return res
       .status(lipilResponse.status)
-      .send(
-        `Error ${lipilResponse.status}: ${lipilResponse.statusText}. Detail: ${errorMsg}`
-      );
+      .send(`Error ${lipilResponse.status} (${lipilResponse.statusText}): ${errorMsg}`);
   }
 
   const statusLabel = lipilData.status || "Pending";
   const receipt = buildReceipt({ ...lipilData, referenceId }, statusLabel);
 
   return res.status(200).json({
-    notification:
-      "Payment request sent successfully. Please check your phone for a PIN prompt.",
+    notification: "Payment request sent successfully. Please check your phone for a PIN prompt.",
     referenceId: referenceId,
     ...receipt,
   });
@@ -114,8 +122,6 @@ app.get("/status", async (req, res) => {
   }
 
   let lipilResponse;
-  let lipilData;
-
   try {
     lipilResponse = await fetch(
       `${LIPILA_BASE_URL}/collections/check-status?referenceId=${encodeURIComponent(referenceId)}`,
@@ -127,14 +133,18 @@ app.get("/status", async (req, res) => {
         },
       }
     );
-
-    lipilData = await lipilResponse.json();
   } catch (networkError) {
     return res
       .status(502)
-      .send(
-        `Error: Failed to reach Lipila API. Network error: ${networkError.message}`
-      );
+      .send(`Error: Could not connect to Lipila API. Check your internet or try again. Detail: ${networkError.message}`);
+  }
+
+  const lipilData = await safeJson(lipilResponse);
+
+  if (lipilData._parseError) {
+    return res
+      .status(502)
+      .send(`Error: Lipila API responded with HTTP ${lipilResponse.status} but returned an unreadable body. ${lipilData._parseError}`);
   }
 
   if (!lipilResponse.ok) {
@@ -143,12 +153,9 @@ app.get("/status", async (req, res) => {
       lipilData?.error ||
       JSON.stringify(lipilData) ||
       "Unknown error from Lipila API";
-
     return res
       .status(lipilResponse.status)
-      .send(
-        `Error ${lipilResponse.status}: ${lipilResponse.statusText}. Detail: ${errorMsg}`
-      );
+      .send(`Error ${lipilResponse.status} (${lipilResponse.statusText}): ${errorMsg}`);
   }
 
   const transactionStatus = lipilData.status || "Unknown";
@@ -160,8 +167,7 @@ app.get("/status", async (req, res) => {
   } else if (transactionStatus === "Failed") {
     notification = `Payment Failed. Reason: ${lipilData.message || "Unknown reason"}. Payment type: ${lipilData.paymentType || "Unknown"}.`;
   } else if (transactionStatus === "Pending") {
-    notification =
-      "Payment is still pending. The user has not yet entered their PIN. If using MTN, try dialing *115#.";
+    notification = "Payment is still pending. The user has not yet entered their PIN. If using MTN, try dialing *115#.";
   } else {
     notification = `Transaction status: ${transactionStatus}. Message: ${lipilData.message || "No message provided."}`;
   }

@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from "uuid";
 
 const app = express();
 
-const LIPILA_API_KEY = "lsk_019d494a-8253-7699-b7a9-3891047dc269";
+const LIPILA_API_KEY = "lsk_019d6dd8-4b28-7b9f-8be4-643d476ddced";
 const LIPILA_BASE_URL = "https://blz.lipila.io/api/v1";
 
 app.use(cors());
